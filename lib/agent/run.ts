@@ -3,6 +3,7 @@ import { stepCountIs, streamText, type LanguageModel, type ModelMessage } from "
 import { demoAgent } from "./demo";
 import { getModel, logLlmCall } from "@/lib/llm";
 import { systemPrompt } from "./prompt";
+import { scopeRefusal } from "./scope";
 import { aiTools, SMS_SAFE_TOOLS, type ToolCtx, type UiEvent } from "./tools";
 import { getItinerary } from "./tools";
 
@@ -16,6 +17,12 @@ export type RunResult = { text: string; agent: "llm" | "demo"; label: string };
 /** Runs the trip agent. LLM when LLM_API_KEY is set, otherwise the labelled demo agent. */
 export async function runAgent(opts: { ctx: ToolCtx; history: ModelMessage[]; message: string; emit: (e: AgentEvent) => void; modelOverride?: LanguageModel }): Promise<RunResult> {
   const { ctx, history, message, emit } = opts;
+  // Topic guard: clearly off-topic or rule-override messages never reach the model.
+  const refusal = scopeRefusal(message);
+  if (refusal) {
+    for (const part of refusal.match(/.{1,24}(\s|$)/g) ?? [refusal]) emit({ t: "text", delta: part });
+    return { text: refusal, agent: "llm", label: "Travel-only guard" };
+  }
   const chosen = opts.modelOverride ? { model: opts.modelOverride, label: "test-model" } : getModel();
   let n = 0;
   ctx.ui = ((orig) => (e: UiEvent) => { orig(e); emit(e); })(ctx.ui);

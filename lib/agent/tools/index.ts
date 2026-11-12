@@ -26,6 +26,7 @@ import { addDays, fmtDate, inr, localDate, localTime, tzLabel, zonedToUtc } from
 import { rateSeverity, SLA_SECONDS, type Severity } from "../severity";
 
 export type UiEvent =
+  | DetailsUi
   | { t: "review"; card: ReviewCard }
   | { t: "case"; caseRef: string; severity: number; slaSeconds: number; summary: string }
   | { t: "route"; routeId: string; fromName: string; toName: string; distance_m: number; duration_s: number; approximate: boolean; url: string }
@@ -33,6 +34,9 @@ export type UiEvent =
   | { t: "compare"; bookingRef: string; itemId: string; query: { from: string; to: string; date: string; pax: number }; flight: { flightNo: string; carrier: string; from: string; to: string; date: string; departsLocal: string; arrivesLocal: string; departIso: string; arriveIso: string; pnr: string; leg: string; pax: number }; sample?: boolean; providers: { name: string; ok: boolean; count: number; error?: string }[]; offers: { id: string; providerLabel: string; source: string; totalInr: number; perTravellerInr: number; breakup: { label: string; amountInr: number }[]; facts: { carrier: string; flightNo: string; from: string; to: string; departLocal: string; arriveLocal: string; stops: number; durationMin?: number }; validUntil: string; platformPrices?: PlatformPrice[] }[]; cheapestId?: string; fastestId?: string; platforms: { id: string; name: string; searchUrl: string; manageUrl: string; connected: boolean }[] }
   | { t: "hotels"; bookingRef: string; itemId: string; configured: boolean; sample?: boolean; current: { name: string; city: string; address: string; checkin: string; checkout: string; rooms: number; lat: number; lon: number }; query: { checkin: string; checkout: string; nights: number; rooms: number; adults: number; city: string }; providers: { name: string; ok: boolean; count: number; error?: string }[]; offers: HotelOffer[]; cheapestId?: string; platforms: { id: string; name: string; hotelsUrl: string; connected: boolean }[] }
   | { t: "platforms"; bookingRef: string; itemId: string; flight: { flightNo: string; carrier: string; from: string; to: string; date: string; departsLocal: string; arrivesLocal: string; departIso: string; arriveIso: string; pnr: string; leg: string; pax: number }; platforms: { id: string; name: string; searchUrl: string; manageUrl: string; connected: boolean }[] };
+
+export type DetailsPrefill = { airline?: string; flightNo?: string; from?: string; to?: string; departLocal?: string; arriveLocal?: string; pnr?: string; name?: string; address?: string; city?: string; checkin?: string; checkout?: string; phone?: string };
+export type DetailsUi = { t: "details"; bookingRef: string; kind: "flight" | "hotel"; prefill: DetailsPrefill };
 
 export type ToolCtx = {
   userId: string;
@@ -47,7 +51,7 @@ export type ToolCtx = {
   ui: (e: UiEvent) => void;
 };
 
-export const TOOL_NAMES = ["get_itinerary", "get_route", "search_flights", "connect_platform", "compare_flights", "compare_hotels", "search_stays", "search_web", "quote_change", "apply_change", "refresh_offline_pack", "escalate_human", "send_sms"] as const;
+export const TOOL_NAMES = ["get_itinerary", "get_route", "search_flights", "connect_platform", "compare_flights", "compare_hotels", "search_stays", "search_web", "add_trip_details", "quote_change", "apply_change", "refresh_offline_pack", "escalate_human", "send_sms"] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 /** The model's allow-list. refresh_offline_pack is a server-side job that runs only after apply_change succeeds. */
 /** search_flights (mock inventory) is not offered to the model: flight changes go through the traveller's own booking platform (connect_platform). */
@@ -100,9 +104,20 @@ export async function getItinerary(ctx: ToolCtx) {
     flights: flights
       .map((f) => ({ itemId: f.id, leg: f.details.leg, flightNo: f.details.flightNo, carrier: f.details.carrierName, from: f.details.from, to: f.details.to, departsUtc: f.details.departAt, arrivesUtc: f.details.arriveAt, farePerTravellerInr: f.details.farePerPaxInr, changeFeeInr: f.details.changeFeeInr, date: f.date }))
       .sort((a, b) => String(a.departsUtc).localeCompare(String(b.departsUtc))),
+    missingDetails: { flights: flights.length === 0, hotel: hotel?.kind !== "hotel" },
+    ...(hotel?.kind !== "hotel" ? { hotelNote: "No hotel has been added to this trip yet, so the hotel fields above are only the city centre. Offer add_trip_details with kind hotel." } : {}),
     totalInr: pack.booking.totalInr,
     note: "Sample data from the traveller's booking.",
   };
+}
+
+/** Shows a form (prefilled from what the traveller said) to add a missing flight or hotel. The traveller reviews it and taps Save; the model never saves anything. */
+export async function addTripDetailsTool(ctx: ToolCtx, input: { kind: "flight" | "hotel"; prefill?: DetailsPrefill }) {
+  const db = await getDb();
+  const [b] = await db.select({ planId: s.bookings.planId }).from(s.bookings).where(eq(s.bookings.id, ctx.bookingId));
+  if (!b?.planId) return { shown: false, message: "This trip came from the catalogue and already has its flights and hotel. Use compare_flights or compare_hotels to change them." };
+  ctx.ui({ t: "details", bookingRef: ctx.bookingRef, kind: input.kind, prefill: input.prefill ?? {} });
+  return { shown: true, next: `A form to add the ${input.kind} is on the traveller's screen${input.prefill && Object.keys(input.prefill).length ? ", filled with what they told you" : ""}. Tell them in one or two sentences to check it, fill any blank fields from their ${input.kind === "flight" ? "ticket" : "booking confirmation"} and tap Save. Times are local to each airport. Nothing is booked or paid by this. Do not say it is saved until they tell you they saved it.` };
 }
 
 export async function getRoute(ctx: ToolCtx, input: { from?: string; to: string }) {
@@ -337,6 +352,14 @@ export const SCHEMAS = {
   compare_hotels: z.object({ extraNights: z.number().int().min(1).max(14).optional().describe("Nights to add after the current check-out"), nights: z.number().int().min(1).max(14).optional().describe("Nights for a different stay"), checkin: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Check-in date if not the current check-out") }),
   connect_platform: z.object({ itemId: Id.optional().describe("Booked flight itemId from get_itinerary. Defaults to the next upcoming flight.") }),
   search_stays: z.object({ extraNights: z.number().int().min(1).max(3) }),
+  add_trip_details: z.object({
+    kind: z.enum(["flight", "hotel"]).describe("What is missing from the trip"),
+    prefill: z.object({
+      airline: z.string().max(60).optional(), flightNo: z.string().max(10).optional(), from: z.string().max(3).optional().describe("IATA code"), to: z.string().max(3).optional().describe("IATA code"),
+      departLocal: z.string().max(16).optional().describe("YYYY-MM-DDTHH:mm, local to the departure airport"), arriveLocal: z.string().max(16).optional().describe("YYYY-MM-DDTHH:mm, local to the arrival airport"), pnr: z.string().max(12).optional(),
+      name: z.string().max(100).optional(), address: z.string().max(200).optional(), city: z.string().max(60).optional(), checkin: z.string().max(10).optional().describe("YYYY-MM-DD"), checkout: z.string().max(10).optional().describe("YYYY-MM-DD"), phone: z.string().max(30).optional(),
+    }).optional().describe("Only details the traveller actually told you. Never guess."),
+  }),
   search_web: z.object({ query: z.string().min(3).max(200).describe("A travel information question, e.g. visa rules or opening hours") }),
   quote_change: z.object({ kind: z.enum(["flight_change", "hotel_extend"]), itemId: Id.optional().describe("flight_change: booked flight itemId"), newFlightId: Id.optional().describe("flight_change: one flightId from search_flights"), newFlightIds: z.array(Id).min(1).max(3).optional().describe("flight_change: up to 3 flightIds to show as an option list"), extraNights: z.number().int().min(1).max(3).optional().describe("hotel_extend: nights to add") }),
   apply_change: z.object({ quoteId: Id }),
@@ -353,6 +376,7 @@ export const DESCRIPTIONS: Record<ToolName, string> = {
   compare_hotels: "Use FIRST for any request to extend, change or move a HOTEL stay. Compares live hotel prices near the traveller's stay from the official price API (when configured) and shows links to MakeMyTrip, Goibibo, Cleartrip and ixigo where they book and pay, plus a form to record the booking. Does not book, pay or change anything.",
   connect_platform: "Use only when the traveller just wants the platform links without a price comparison, or wants to cancel or get a refund for a FLIGHT. Shows a picker to open MakeMyTrip, Goibibo, Cleartrip or ixigo (the traveller logs in there themselves) and a form to record the new flight. Does not search, price or change anything.",
   search_stays: "Check availability to extend the stay at the last hotel by 1 to 3 nights.",
+  add_trip_details: "Use when the trip has no flight or no hotel (get_itinerary missingDetails) or the traveller wants to add a flight or hotel they forgot. Shows a form on their screen, prefilled with only what they told you, that they check and Save themselves. Does not save, book or pay anything.",
   search_web: "Look up general travel information with a web search API. Cites sources. Never a booking price.",
   quote_change: "Price a HOTEL EXTENSION (kind hotel_extend) and show the traveller a review card with a price breakup and Yes / No. Never use it for flights (use connect_platform). Does NOT change anything.",
   apply_change: "Apply a quoted change. Needs the traveller's Confirm tap; without it this does nothing. Never claim a change is done unless this returns applied: true.",
@@ -380,6 +404,7 @@ export async function runTool(name: ToolName, rawInput: unknown, ctx: ToolCtx, o
       case "compare_flights": return compareFlightsTool(ctx, input);
       case "compare_hotels": return compareHotelsTool(ctx, input);
       case "search_stays": return searchStaysTool(ctx, input);
+      case "add_trip_details": return addTripDetailsTool(ctx, input);
       case "search_web": return searchWeb((input as { query: string }).query);
       case "refresh_offline_pack": return refreshOfflinePack(ctx.bookingId, "Manual refresh");
       case "quote_change": return quoteChange(ctx, input);

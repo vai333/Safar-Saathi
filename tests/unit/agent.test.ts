@@ -18,13 +18,15 @@ const emit = { step: () => {}, text: () => {} };
 beforeAll(async () => { c = await setupDb(); });
 
 describe("agent tools", () => {
-  it("registers 13 tools; the model gets 10 (refresh_offline_pack is server-only, search_flights and search_stays are mock-only) and none can mint a token", () => {
-    expect(TOOL_NAMES).toEqual(["get_itinerary", "get_route", "search_flights", "connect_platform", "compare_flights", "compare_hotels", "search_stays", "search_web", "quote_change", "apply_change", "refresh_offline_pack", "escalate_human", "send_sms"]);
+  it("registers 14 tools; the model gets 11 (refresh_offline_pack is server-only, search_flights and search_stays are mock-only) and none can mint a token", () => {
+    expect(TOOL_NAMES).toEqual(["get_itinerary", "get_route", "search_flights", "connect_platform", "compare_flights", "compare_hotels", "search_stays", "search_web", "add_trip_details", "quote_change", "apply_change", "refresh_offline_pack", "escalate_human", "send_sms"]);
     expect(Object.keys(aiTools(mk())).sort()).toEqual([...MODEL_TOOLS].sort());
     expect(Object.keys(aiTools(mk()))).not.toContain("refresh_offline_pack");
     expect(Object.keys(aiTools(mk()))).not.toContain("search_flights"); // flight changes never use sample inventory in chat
     expect(Object.keys(aiTools(mk()))).toContain("connect_platform");
     expect(Object.keys(aiTools(mk()))).toContain("compare_flights");
+    expect(Object.keys(aiTools(mk()))).toContain("add_trip_details");
+    expect(Object.keys(aiTools(mk(), SMS_SAFE_TOOLS))).not.toContain("add_trip_details"); // a form needs the app, not SMS
     expect(SMS_SAFE_TOOLS.every((t) => TOOL_NAMES.includes(t))).toBe(true);
     expect(Object.keys(aiTools(mk(), SMS_SAFE_TOOLS)).length).toBe(3);
   });

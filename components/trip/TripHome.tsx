@@ -46,6 +46,16 @@ function Inner({ pack }: { pack: import("@/lib/packs/types").OfflinePack }) {
         </Card>
       )}
       <OfflineStatus />
+      {(pack.flights.length === 0 || pack.stays.every((st) => pack.places[st.hotelId]?.kind !== "hotel")) && pack.booking.status !== "draft" && (
+        <Card className="space-y-3 border-lime" data-testid="missing-details">
+          <h2 className="text-[17px] font-semibold">Add your missing details</h2>
+          <p className="text-[15px]">{pack.flights.length === 0 && pack.stays.every((st) => pack.places[st.hotelId]?.kind !== "hotel") ? "Your trip has no flight or hotel yet." : pack.flights.length === 0 ? "Your trip has no flight yet." : "Your trip has no hotel yet."} Add {pack.flights.length === 0 ? "them" : "it"} now or later. Your day plan, map and guide update when you save.</p>
+          <div className="flex flex-wrap gap-2">
+            {pack.flights.length === 0 && <LinkButton href={`/trips/${pack.booking.ref}/chat?add=flight`} size="md" data-testid="add-flight">Add flight</LinkButton>}
+            {pack.stays.every((st) => pack.places[st.hotelId]?.kind !== "hotel") && <LinkButton href={`/trips/${pack.booking.ref}/chat?add=hotel`} size="md" data-testid="add-hotel">Add hotel</LinkButton>}
+          </div>
+        </Card>
+      )}
 
       <Card className="space-y-2" data-testid="next-plan">
         <div className="flex items-center justify-between"><h2 className="flex items-center gap-2 text-[17px] font-semibold"><Plane size={20} strokeWidth={1.75} className="text-accent" /> {status === "before" ? "Your trip starts with" : status === "after" ? "Trip finished" : "Next plan"}</h2>{next && <Badge>{relTime(next.at, now)}</Badge>}</div>

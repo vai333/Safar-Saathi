@@ -13,6 +13,7 @@ import { ReviewCardView, type Review, type ReviewState } from "./ReviewCard";
 import { PlatformCard, type PlatformsPart } from "./PlatformCard";
 import { CompareCard, type ComparePart } from "./CompareCard";
 import { HotelCard, type HotelsPart } from "./HotelCard";
+import { AddDetailsCard, type DetailsPart } from "./AddDetailsCard";
 
 type Step = { id: string; name: string; status: "running" | "done" | "error" };
 type Receipt = { kind?: string; receiptId: string; summary: string; priceDeltaInr: number; newTotalInr: number; packVersion: number; bookingRef: string; guide?: { updated: boolean; regenerated: string[]; origin?: string; message: string } };
@@ -24,11 +25,12 @@ type Part =
   | PlatformsPart
   | ComparePart
   | HotelsPart
+  | DetailsPart
 ;
 type Msg = { id: string; role: "user" | "assistant"; text: string; steps: Step[]; parts: Part[]; queued?: boolean; label?: string; ms?: number; offlineLink?: boolean };
 
 const DEMO = process.env.NEXT_PUBLIC_DEMO_MODE !== "false";
-const PROMPTS = ["When is my pickup?", "Change my flight", "Change my hotel stay", "How do I get from my hotel to the Colosseum?"];
+const PROMPTS = ["When is my pickup?", "Change my flight", "Change my hotel stay", "How do I stay hygienic while travelling?"];
 let uid = 0;
 const nid = () => `m${++uid}-${Date.now()}`;
 
@@ -44,6 +46,18 @@ export function Chat() {
   const [loaded, setLoaded] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
   const online = trip.net === "online";
+  const pack = trip.pack;
+  const missing = { flight: !!pack && pack.flights.length === 0, hotel: !!pack && pack.stays.every((st) => pack.places[st.hotelId]?.kind !== "hotel") };
+  const showForm = useCallback((kind: "flight" | "hotel") => {
+    setMsgs((m) => [...m, { id: nid(), role: "assistant", steps: [], text: `Add your ${kind} details below. You can add more any time.`, parts: [{ t: "details", bookingRef: ref, kind, prefill: {} }] }]);
+  }, [ref]);
+  // opened from the trip page ("Add missing details"): show the form straight away
+  const openedForm = useRef(false);
+  useEffect(() => {
+    if (openedForm.current || !loaded) return;
+    const a = new URLSearchParams(window.location.search).get("add");
+    if (a === "flight" || a === "hotel") { openedForm.current = true; showForm(a); }
+  }, [loaded, showForm]);
   // The offline assistant is a separate chat (/trips/{ref}/offline). This chat only talks to the online Trip agent.
 
   // restore history when online
@@ -95,7 +109,7 @@ export function Chat() {
           else if (e.t === "step") patch((m) => ({ ...m, steps: m.steps.some((s) => s.id === e.id) ? m.steps.map((s) => (s.id === e.id ? { ...s, status: e.status } : s)) : [...m.steps, { id: e.id, name: e.name, status: e.status }] }));
           else if (e.t === "text") patch((m) => ({ ...m, text: m.text + e.delta }));
           else if (e.t === "review") { setStates((s) => ({ ...s, [e.card.quoteId]: { s: "idle" } })); patch((m) => ({ ...m, parts: [...m.parts, e] })); }
-          else if (e.t === "case" || e.t === "route" || e.t === "receipt" || e.t === "platforms" || e.t === "compare" || e.t === "hotels") patch((m) => ({ ...m, parts: [...m.parts, e] }));
+          else if (e.t === "case" || e.t === "route" || e.t === "receipt" || e.t === "platforms" || e.t === "compare" || e.t === "hotels" || e.t === "details") patch((m) => ({ ...m, parts: [...m.parts, e] }));
           else if (e.t === "done") patch((m) => ({ ...m, label: e.label, ms: e.ms }));
           else if (e.t === "error") patch((m) => ({ ...m, text: m.text || e.message }));
         }
@@ -143,6 +157,11 @@ export function Chat() {
   const addReview = (card: Review) => {
     setStates((s) => ({ ...s, [card.quoteId]: { s: "idle" } }));
     setMsgs((m) => [...m, { id: nid(), role: "assistant", steps: [], text: "Check these details against your airline confirmation. If they match, tap Yes to update your trip.", parts: [{ t: "review", card }] }]);
+  };
+  /** A missing flight or hotel was saved: the server rebuilt the guide, so pull the new version and say what changed. */
+  const detailsSaved = (summary: string, kind: "flight" | "hotel") => {
+    setMsgs((m) => [...m, { id: nid(), role: "assistant", steps: [], text: `Done. I added your ${kind} (${summary}). Your day plan, map and offline guide are updated. You can add more details any time.`, parts: [] }]);
+    void trip.sync();
   };
   const confirm = async (card: Review) => {
     setState(card.quoteId, "confirming");
@@ -195,7 +214,13 @@ export function Chat() {
       <div className="flex flex-1 flex-col gap-4" aria-live="polite" aria-relevant="additions text" data-testid="chat-log">
         {!msgs.length && (
           <div className="space-y-3">
-            <p className="text-muted">Ask about your trip. I only answer from your booking. Changes always need your Confirm tap.</p>
+            <p className="text-muted">Ask about your trip or about travelling in general: safety, hygiene, food, money, packing. I only answer travel questions, and trip facts only from your booking. Changes always need your Confirm tap.</p>
+            {(missing.flight || missing.hotel) && (
+              <div className="flex flex-wrap gap-2" data-testid="add-missing">
+                {missing.flight && <button onClick={() => showForm("flight")} className="min-h-11 rounded-full border-[1.5px] border-lime bg-surface px-4 text-left text-[15px] font-semibold">+ Add my flight details</button>}
+                {missing.hotel && <button onClick={() => showForm("hotel")} className="min-h-11 rounded-full border-[1.5px] border-lime bg-surface px-4 text-left text-[15px] font-semibold">+ Add my hotel details</button>}
+              </div>
+            )}
             <div className="flex flex-wrap gap-2">{PROMPTS.map((p) => <button key={p} onClick={() => void send(p)} className="min-h-11 rounded-full border-[1.5px] border-line bg-surface px-4 text-left text-[15px] hover:border-muted">{p}</button>)}</div>
           </div>
         )}
@@ -209,7 +234,7 @@ export function Chat() {
                 {m.text ? <div className="card-2 whitespace-pre-wrap px-4 py-3" data-testid="assistant-text">{m.text}</div> : (!m.parts.length && <div className="typing card-2 inline-block px-4 py-3" aria-label="Agent is typing"><span /><span /><span /></div>)}
                 {m.parts.some((p) => p.t === "review") && m.parts.filter((p) => p.t === "review").length > 1 && <p className="text-[15px] font-semibold" data-testid="options-heading">Choose an option ({m.parts.filter((p) => p.t === "review").length}). Compare the breakups, then tap Yes on one or No.</p>}
                 {m.offlineLink && <LinkButton href={`/trips/${ref}/offline`} size="md" data-testid="ask-offline-assistant"><CloudOff size={16} /> Ask the offline assistant</LinkButton>}
-                {m.parts.map((p, i) => <PartView key={i} p={p} states={states} onConfirm={confirm} onDecline={decline} refCode={ref} online={online} onReview={addReview} onRecord={recordFromCompare} />)}
+                {m.parts.map((p, i) => <PartView key={i} p={p} states={states} onConfirm={confirm} onDecline={decline} refCode={ref} online={online} onReview={addReview} onRecord={recordFromCompare} onDetailsSaved={detailsSaved} />)}
                 {m.label && <p className="text-[13px] text-muted">{m.label}{m.ms ? ` · ${(m.ms / 1000).toFixed(1)} s` : ""}</p>}
               </div>
             )}
@@ -235,7 +260,7 @@ function StepChip({ s }: { s: Step }) {
   return <span data-testid="step-chip" className="inline-flex items-center gap-1 rounded-full border border-line bg-surface px-2.5 py-1 font-mono text-[13px]">{icon}{s.name}</span>;
 }
 
-function PartView({ p, states, onConfirm, onDecline, refCode, online, onReview, onRecord }: { online: boolean; onReview: (c: Review) => void; onRecord: (p: NonNullable<PlatformsPart["prefill"]>, c: ComparePart) => void; p: Part; states: Record<string, { s: ReviewState; err?: string }>; onConfirm: (c: Review) => void; onDecline: (c: Review) => void; refCode: string }) {
+function PartView({ p, states, onConfirm, onDecline, refCode, online, onReview, onRecord, onDetailsSaved }: { online: boolean; onDetailsSaved: (summary: string, kind: "flight" | "hotel") => void; onReview: (c: Review) => void; onRecord: (p: NonNullable<PlatformsPart["prefill"]>, c: ComparePart) => void; p: Part; states: Record<string, { s: ReviewState; err?: string }>; onConfirm: (c: Review) => void; onDecline: (c: Review) => void; refCode: string }) {
   if (p.t === "review") {
     const st = states[p.card.quoteId] ?? { s: "idle" as ReviewState };
     return <ReviewCardView card={p.card} state={st.s} error={st.err} onConfirm={() => onConfirm(p.card)} onDecline={() => onDecline(p.card)} />;
@@ -252,6 +277,7 @@ function PartView({ p, states, onConfirm, onDecline, refCode, online, onReview, 
       </section>
     );
   }
+  if (p.t === "details") return <AddDetailsCard part={p} online={online} onSaved={onDetailsSaved} />;
   if (p.t === "hotels") return <HotelCard part={p} online={online} onReview={onReview} />;
   if (p.t === "compare") return <CompareCard part={p} online={online} onRecord={onRecord} />;
   if (p.t === "platforms") return <PlatformCard part={p} online={online} onReview={onReview} />;

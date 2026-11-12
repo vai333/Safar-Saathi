@@ -57,7 +57,7 @@ export async function buildPlanPackContent(b: typeof s.bookings.$inferSelect, db
     places[`airport_${iata}`] = { id: `airport_${iata}`, kind: "airport", city: a.citySlug ?? "home", name: a.name, name_local: a.name, address: a.name, address_local: a.name, lat: a.lat, lon: a.lon };
   }
   for (const c of cities) {
-    places[`city_${c.slug}`] = { id: `city_${c.slug}`, kind: "poi", city: c.slug, name: `${c.name} centre`, name_local: `${c.name} centre`, address: `${c.name}, ${c.country}`, address_local: `${c.name}, ${c.country}`, lat: c.lat, lon: c.lon , ...(p.photos?.[`city:${c.slug}`] ? { image: p.photos[`city:${c.slug}`] } : {}) };
+    places[`city_${c.slug}`] = { id: `city_${c.slug}`, kind: "poi", city: c.slug, name: `${c.name} centre`, name_local: `${c.name} centre`, address: `${c.name}, ${c.country}`, address_local: `${c.name}, ${c.country}`, phone: NOT_GIVEN, lat: c.lat, lon: c.lon , ...(p.photos?.[`city:${c.slug}`] ? { image: p.photos[`city:${c.slug}`] } : {}) };
   }
   const hotelItems = items.filter((i) => i.kind === "hotel").sort((x, y) => String(x.details.checkinDate).localeCompare(String(y.details.checkinDate)));
   hotelItems.forEach((h, i) => {
@@ -102,6 +102,12 @@ export async function buildPlanPackContent(b: typeof s.bookings.$inferSelect, db
       const drop = driverFor(slug, String(d.checkoutDate), "drop");
       stays.push({ city: slug, cityName: String(d.cityName ?? c.name), tz: tzOfCity(slug), from: String(d.checkinDate), to: String(d.checkoutDate), hotelId: `hotel_${i}`, airportId: airportFor(slug), emergency: emergencyFor(slug, c.country), consulate: consulateFor(c.country), driver: driverFor(slug, String(d.checkinDate), "pickup"), dropDriver: { name: drop.name, vendor: drop.vendor, phone: drop.phone, pickup_code: drop.pickup_code } });
     });
+    // a city with no hotel yet (added later, or missing from the documents) keeps a city-centre stay, so the trip has no gaps
+    for (const c of cities.filter((x) => !stays.some((st) => st.city === x.slug))) {
+      const drop = driverFor(c.slug, c.to, "drop");
+      stays.push({ city: c.slug, cityName: c.name, tz: tzOfCity(c.slug), from: c.from, to: c.to, hotelId: `city_${c.slug}`, airportId: airportFor(c.slug), emergency: emergencyFor(c.slug, c.country), consulate: consulateFor(c.country), driver: driverFor(c.slug, c.from, "pickup"), dropDriver: { name: drop.name, vendor: drop.vendor, phone: drop.phone, pickup_code: drop.pickup_code } });
+    }
+    stays.sort((x, y) => x.from.localeCompare(y.from));
   } else {
     for (const c of cities) {
       const drop = driverFor(c.slug, c.to, "drop");
