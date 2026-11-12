@@ -53,8 +53,8 @@ export async function llmJson(req: LlmRequest): Promise<{ ok: true; data: unknow
       const m = getModel();
       if (!m) return { ok: false, error: "No LLM configured" };
       const r = req.images?.length
-        ? await generateText({ model: m.model, system: req.system, messages: [{ role: "user", content: [{ type: "text", text: req.prompt }, ...req.images.map((image) => ({ type: "image", image }))] }], temperature: 0.1, maxOutputTokens: req.maxOutputTokens ?? 12000 } as never)
-        : await generateText({ model: m.model, system: req.system, prompt: req.prompt, temperature: req.purpose === "plan" ? 0.1 : 0.2, maxOutputTokens: req.maxOutputTokens ?? 6000 } as never);
+        ? await generateText({ model: m.model, system: req.system, messages: [{ role: "user", content: [{ type: "text", text: req.prompt }, ...req.images.map((image) => ({ type: "image", image }))] }], temperature: 0.1, maxOutputTokens: req.maxOutputTokens ?? 12000, ...(req.purpose === "rules" ? { abortSignal: AbortSignal.timeout(20000) } : {}) } as never)
+        : await generateText({ model: m.model, system: req.system, prompt: req.prompt, temperature: req.purpose === "plan" ? 0.1 : 0.2, maxOutputTokens: req.maxOutputTokens ?? 6000, ...(req.purpose === "rules" ? { abortSignal: AbortSignal.timeout(20000) } : {}) } as never);
       text = (r as { text: string }).text;
     }
     const data = extractJson(text);

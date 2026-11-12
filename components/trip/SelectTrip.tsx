@@ -14,7 +14,7 @@ export function SelectTrip({ slug, startDate, pax, className }: { slug: string; 
     try {
       const r = await fetch("/api/trips/select", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slug, startDate, pax }) });
       if (r.status === 401) { router.push(`/login?next=${encodeURIComponent(`/itinerary/${slug}?start=${startDate}&pax=${pax}`)}`); return; }
-      const j = await r.json();
+      const j = await r.json().catch(() => ({ message: "The server took too long. Please tap Select this trip again." }));
       if (!r.ok) { setErr(j.message ?? "Could not select this trip."); setBusy(false); return; }
       router.push(`/trips/${j.ref}?setup=1`);
     } catch { setErr("No connection. Selecting a trip needs data once, so it can be saved on your phone."); setBusy(false); }

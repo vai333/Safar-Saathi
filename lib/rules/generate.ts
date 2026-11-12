@@ -131,7 +131,9 @@ export async function resolveRules(data: RuleData, tripId: string, prev?: Stored
     let drafted: ScenarioIn[] | null = null;
     if (llmAvailable()) {
       let errors: string[] = [];
+      const started = Date.now();
       for (let attempt = 0; attempt < 2 && !drafted; attempt++) {
+        if (attempt > 0 && Date.now() - started > 25000) { failures.push("retry skipped: out of time"); break; } // the request has a hard limit; templates are the safe fallback
         const r = await draftWithLlm(changed, data, errors);
         if (!r.ok) { errors = [r.error]; failures.push(`attempt ${attempt + 1}: ${r.error}`); continue; }
         const trial = new Map(keep);
