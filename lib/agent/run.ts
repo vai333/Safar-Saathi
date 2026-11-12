@@ -52,7 +52,7 @@ export async function runAgent(opts: { ctx: ToolCtx; history: ModelMessage[]; me
     messages: [...history, { role: "user", content: message }],
     tools: aiTools(ctx, ctx.channel === "sms" ? SMS_SAFE_TOOLS : undefined) as never,
     stopWhen: stepCountIs(8),
-    maxOutputTokens: ctx.channel === "sms" ? 120 : 500,
+    maxOutputTokens: ctx.channel === "sms" ? 120 : 900,
     temperature: 0.2,
   } as any) as unknown as { fullStream: AsyncIterable<any> };
   let text = "";
